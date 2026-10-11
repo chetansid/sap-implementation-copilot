@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SAP Implementation Copilot</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f0f2f5; height: 100vh; display: flex; flex-direction: column; }
+    header { background: #003366; color: white; padding: 14px 24px; display: flex; align-items: center; justify-content: space-between; }
+    header h1 { font-size: 17px; font-weight: 600; }
+    header p { font-size: 11px; opacity: 0.7; margin-top: 2px; }
+    .main { display: flex; flex: 1; overflow: hidden; }
+    .sidebar { width: 280px; background: white; border-right: 1px solid #e0e0e0; display: flex; flex-direction: column; padding: 16px; gap: 16px; overflow-y: auto; }
+    .sidebar-title { font-size: 12px; font-weight: 600; color: #333; margin-bottom: 8px; }
+    .doc-type-select { width: 100%; padding: 7px 10px; border: 1px solid #e0e0e0; border-radius: 6px; font-size: 12px; margin-bottom: 8px; }
+    .upload-area { border: 2px dashed #e0e0e0; border-radius: 8px; padding: 16px; text-align: center; cursor: pointer; transition: border-color 0.2s; }
+    .upload-area:hover { border-color: #003366; }
+    .upload-area input { display: none; }
+    .upload-area p { font-size: 12px; color: #888; margin-top: 6px; }
+    .upload-btn { width: 100%; padding: 8px; background: #003366; color: white; border: none; border-radius: 6px; font-size: 12px; cursor: pointer; margin-top: 8px; }
+    .upload-btn:hover { background: #004488; }
+    .upload-status { font-size: 11px; color: #137333; margin-top: 6px; text-align: center; }
+    .doc-list { list-style: none; }
+    .doc-item { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 6px; background: #f8f8f8; margin-bottom: 4px; }
+    .doc-badge { font-size: 9px; padding: 1px 6px; border-radius: 10px; font-weight: 600; }
+    .badge-ricefw { background: #e8f0fe; color: #1a73e8; }
+    .badge-note { background: #e6f4ea; color: #137333; }
+    .badge-log { background: #fef3e2; color: #b45309; }
+    .badge-design { background: #f3e8fd; color: #7b1fa2; }
+    .doc-name { font-size: 11px; color: #333; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .suggestions { display: flex; flex-direction: column; gap: 6px; }
+    .suggestion { font-size: 11px; padding: 8px 10px; border: 1px solid #e0e0e0; border-radius: 6px; cursor: pointer; color: #555; background: #fafafa; text-align: left; }
+    .suggestion:hover { border-color: #003366; color: #003366; background: #f0f4ff; }
+    .chat-area { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+    .messages { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 14px; }
+    .message { display: flex; flex-direction: column; max-width: 85%; }
+    .message.user { align-self: flex-end; align-items: flex-end; }
+    .message.assistant { align-self: flex-start; align-items: flex-start; }
+    .bubble { padding: 12px 16px; border-radius: 16px; font-size: 13px; line-height: 1.6; white-space: pre-wrap; }
+    .user .bubble { background: #003366; color: white; border-bottom-right-radius: 4px; }
+    .assistant .bubble { background: white; color: #333; border-bottom-left-radius: 4px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+    .intent-tag { font-size: 10px; color: #888; margin-top: 3px; padding: 0 4px; }
+    .typing { display: flex; gap: 4px; padding: 12px 16px; background: white; border-radius: 16px; border-bottom-left-radius: 4px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); width: fit-content; }
+    .dot { width: 7px; height: 7px; background: #ccc; border-radius: 50%; animation: bounce 1.2s infinite; }
+    .dot:nth-child(2) { animation-delay: 0.2s; }
+    .dot:nth-child(3) { animation-delay: 0.4s; }
+    @keyframes bounce { 0%,60%,100% { transform: translateY(0); } 30% { transform: translateY(-5px); } }
+    .input-area { background: white; border-top: 1px solid #e0e0e0; padding: 14px 20px; }
+    .input-row { display: flex; gap: 10px; }
+    textarea { flex: 1; padding: 10px 14px; border: 1px solid #e0e0e0; border-radius: 20px; font-size: 13px; resize: none; outline: none; font-family: inherit; height: 42px; line-height: 22px; }
+    textarea:focus { border-color: #003366; }
+    .send-btn { padding: 10px 20px; background: #003366; color: white; border: none; border-radius: 20px; font-size: 13px; cursor: pointer; white-space: nowrap; }
+    .send-btn:hover { background: #004488; }
+    .send-btn:disabled { background: #ccc; cursor: not-allowed; }
+    .log-input { width: 100%; padding: 8px 10px; border: 1px solid #e0e0e0; border-radius: 6px; font-size: 11px; font-family: monospace; resize: vertical; min-height: 80px; }
+    .welcome { text-align: center; color: #888; margin: auto; padding: 40px 20px; }
+    .welcome h2 { font-size: 22px; color: #333; margin-bottom: 8px; }
+    .welcome p { font-size: 13px; line-height: 1.6; max-width: 400px; margin: 0 auto; }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>🚀 SAP Implementation Copilot</h1>
+      <p>RICEFW Analysis · Implementation Notes · Log Analysis · BASIS Scripts</p>
+    </div>
+    <div style="font-size:11px;opacity:0.7;" id="docCount">0 documents loaded</div>
+  </header>
+
+  <div class="main">
+    <!-- Sidebar -->
+    <div class="sidebar">
+      <!-- Upload -->
+      <div>
+        <p class="sidebar-title">📄 Upload Document</p>
+        <select class="doc-type-select" id="docType">
+          <option value="ricefw">RICEFW Functional Spec</option>
+          <option value="note">Implementation Note</option>
+          <option value="log">System Log</option>
+          <option value="design">Technical Design</option>
+        </select>
+        <div class="upload-area" onclick="document.getElementById('fileInput').click()">
+          <input type="file" id="fileInput" accept=".pdf" onchange="uploadFile()">
+          <div style="font-size:24px;">📁</div>
+          <p>Click to upload PDF</p>
+        </div>
+        <div class="upload-status" id="uploadStatus"></div>
+      </div>
+
+      <!-- Documents -->
+      <div>
+        <p class="sidebar-title">📚 Loaded Documents</p>
+        <ul class="doc-list" id="docList">
+          <li style="font-size:11px;color:#bbb;">No documents yet</li>
+        </ul>
+      </div>
+
+      <!-- Log Analyzer -->
+      <div>
+        <p class="sidebar-title">🔍 Paste SAP Log</p>
+        <textarea class="log-input" id="logInput" placeholder="Paste SAP system log here (SM21, ST22, etc.)..."></textarea>
+        <button class="upload-btn" onclick="analyzeLog()">Analyze Log</button>
+      </div>
+
+      <!-- Suggestions -->
+      <div>
+        <p class="sidebar-title">💡 Try These</p>
+        <div class="suggestions">
+          <button class="suggestion" onclick="suggest(this)">Generate technical design for the uploaded RICEFW spec</button>
+          <button class="suggestion" onclick="suggest(this)">What are the open items in my implementation notes?</button>
+          <button class="suggestion" onclick="suggest(this)">Generate a BASIS script to monitor tablespace usage</button>
+          <button class="suggestion" onclick="suggest(this)">What data mappings are defined in the spec?</button>
+          <button class="suggestion" onclick="suggest(this)">Summarize the key decisions from all notes</button>
+          <button class="suggestion" onclick="suggest(this)">Generate a script to check background job status</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Chat -->
+    <div class="chat-area">
+      <div class="messages" id="messages">
+        <div class="welcome" id="welcome">
+          <h2>SAP Implementation Copilot</h2>
+          <p>Upload your RICEFW specs, implementation notes, or paste SAP logs. Then ask anything — I'll generate technical designs, summarize notes, analyze logs, and write BASIS scripts.</p>
+        </div>
+      </div>
+      <div class="input-area">
+        <div class="input-row">
+          <textarea id="questionInput" placeholder="Ask about your specs, notes, logs, or request a BASIS script..." onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendQuestion();}"></textarea>
+          <button class="send-btn" onclick="sendQuestion()" id="sendBtn">Send</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+<script>
+  let history = [];
+  const intentLabels = {
+    SEARCH: '🔍 Searched documents',
+    TECHNICAL_DESIGN: '📐 Generated technical design',
+    BASIS_SCRIPT: '⚙️ Generated BASIS script',
+    LOG_ANALYSIS: '🔎 Analyzed log',
+    SUMMARIZE: '📋 Summarized notes',
+    GENERAL: '💬 General knowledge'
+  };
+
+  function removeWelcome() {
+    const w = document.getElementById('welcome');
+    if (w) w.remove();
+  }
+
+  function addMessage(role, text, intent) {
+    removeWelcome();
+    const msgs = document.getElementById('messages');
+    const div = document.createElement('div');
+    div.className = `message ${role}`;
+    const bubble = document.createElement('div');
+    bubble.className = 'bubble';
+    bubble.textContent = text;
+    div.appendChild(bubble);
+    if (intent && role === 'assistant') {
+      const tag = document.createElement('div');
+      tag.className = 'intent-tag';
+      tag.textContent = intentLabels[intent] || intent;
+      div.appendChild(tag);
+    }
+    msgs.appendChild(div);
+    msgs.scrollTop = msgs.scrollHeight;
+  }
+
+  function addTyping() {
+    removeWelcome();
+    const msgs = document.getElementById('messages');
+    const div = document.createElement('div');
+    div.className = 'message assistant';
+    div.id = 'typing';
+    div.innerHTML = '<div class="typing"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div>';
+    msgs.appendChild(div);
+    msgs.scrollTop = msgs.scrollHeight;
+  }
+
+  function removeTyping() {
+    const t = document.getElementById('typing');
+    if (t) t.remove();
+  }
+
+  async function sendQuestion() {
+    const input = document.getElementById('questionInput');
+    const btn = document.getElementById('sendBtn');
+    const question = input.value.trim();
+    if (!question) return;
+
+    addMessage('user', question);
+    input.value = '';
+    btn.disabled = true;
+    addTyping();
+
+    try {
+      const res = await fetch('/ask', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ question, history })
+      });
+      const data = await res.json();
+      removeTyping();
+      addMessage('assistant', data.answer);
+      history.push({ role: 'user', content: question });
+      history.push({ role: 'assistant', content: data.answer });
+      if (history.length > 10) history = history.slice(-10);
+    } catch (err) {
+      removeTyping();
+      addMessage('assistant', 'Something went wrong. Please try again.');
+    }
+    btn.disabled = false;
+  }
+
+  async function uploadFile() {
+    const fileInput = document.getElementById('fileInput');
+    const docType = document.getElementById('docType').value;
+    const status = document.getElementById('uploadStatus');
+    const file = fileInput.files[0];
+    if (!file) return;
+
+    status.textContent = 'Uploading and ingesting...';
+    status.style.color = '#888';
+
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('doc_type', docType);
+
+    try {
+      const res = await fetch(`/upload?doc_type=${docType}`, {
+        method: 'POST',
+        body: formData
+      });
+      const data = await res.json();
+      status.textContent = `✓ ${data.chunks_created} chunks ingested`;
+      status.style.color = '#137333';
+      loadDocuments();
+    } catch (err) {
+      status.textContent = 'Upload failed. Try again.';
+      status.style.color = '#c5221f';
+    }
+  }
+
+  async function analyzeLog() {
+    const logContent = document.getElementById('logInput').value.trim();
+    if (!logContent) return;
+
+    addMessage('user', `Analyze this SAP log:\n${logContent.slice(0, 100)}...`);
+    addTyping();
+
+    try {
+      const res = await fetch('/analyze-log', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ log_content: logContent })
+      });
+      const data = await res.json();
+      removeTyping();
+      addMessage('assistant', data.analysis, 'LOG_ANALYSIS');
+      document.getElementById('logInput').value = '';
+    } catch (err) {
+      removeTyping();
+      addMessage('assistant', 'Log analysis failed. Please try again.');
+    }
+  }
+
+  async function loadDocuments() {
+    try {
+      const res = await fetch('/documents');
+      const data = await res.json();
+      const list = document.getElementById('docList');
+      const count = document.getElementById('docCount');
+      count.textContent = `${data.total} document${data.total !== 1 ? 's' : ''} loaded`;
+
+      if (data.documents.length === 0) {
+        list.innerHTML = '<li style="font-size:11px;color:#bbb;">No documents yet</li>';
+        return;
+      }
+
+      list.innerHTML = data.documents.map(doc => `
+        <li class="doc-item">
+          <span class="doc-badge badge-${doc.type}">${doc.type}</span>
+          <span class="doc-name" title="${doc.file}">${doc.file}</span>
+        </li>
+      `).join('');
+    } catch (e) {}
+  }
+
+  function suggest(el) {
+    document.getElementById('questionInput').value = el.textContent;
+    sendQuestion();
+  }
+
+  loadDocuments();
+</script>
+</body>
+</html>
