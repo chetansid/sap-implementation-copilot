@@ -11,3 +11,4 @@ pypdf
 langgraph
 aiofiles
 langchain-text-splitters
+python-multipart
