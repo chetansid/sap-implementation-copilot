@@ -121,6 +121,8 @@ async def ask_stream(request: QuestionRequest):
             Question: {request.question}
             Respond with ONLY the category name."""
 
+            yield ": connected\n\n"
+            
             intent_response = llm.invoke([HumanMessage(content=intent_prompt)])
             intent = intent_response.content.strip().upper()
 
@@ -173,7 +175,8 @@ async def ask_stream(request: QuestionRequest):
         generate(),
         media_type="text/event-stream",
         headers={
-            "Cache-Control": "no-cache",
+            "Cache-Control": "no-cache, no-transform",
+            "Connection": "keep-alive",
             "X-Accel-Buffering": "no"
         }
     )
