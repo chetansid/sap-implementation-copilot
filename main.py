@@ -107,63 +107,25 @@ async def ask_stream(request: QuestionRequest):
 
     async def generate():
         try:
-            from langchain_openai import ChatOpenAI
-            from langchain_core.messages import HumanMessage, SystemMessage
-            from tools import search_documents, generate_basis_script, analyze_sap_log, summarize_notes
-            from agent import detect_intent, execute_tool
+            import asyncio
+            from agent import run_agent
 
-            # Detect intent first
-            from langchain_openai import ChatOpenAI
-            llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
-
-            intent_prompt = f"""Classify this question into one category:
-            SEARCH, TECHNICAL_DESIGN, BASIS_SCRIPT, LOG_ANALYSIS, SUMMARIZE, GENERAL
-            Question: {request.question}
-            Respond with ONLY the category name."""
-
-            yield ": connected\n\n"
-            
-            intent_response = llm.invoke([HumanMessage(content=intent_prompt)])
-            intent = intent_response.content.strip().upper()
-
-            # Send intent tag first
-            yield f"data: [INTENT:{intent}]\n\n"
-
-            # Get context
-            context = ""
-            if intent == "SEARCH":
-                context = search_documents(request.question)
-            elif intent == "BASIS_SCRIPT":
-                context = f"Generate BASIS script for: {request.question}"
-            elif intent == "SUMMARIZE":
-                context = summarize_notes(request.question)
-            elif intent == "LOG_ANALYSIS":
-                context = f"Analyze this log: {request.question}"
-
-            # Stream the response
-            system = """You are an expert SAP implementation copilot for EY consultants.
-            Be precise, practical, and reference specific SAP transaction codes.
-            Format your response clearly with numbered steps or sections where appropriate."""
-
-            messages = [SystemMessage(content=system)]
-
-            if context and context != "No relevant documents found.":
-                messages.append(HumanMessage(
-                    content=f"Context:\n{context}\n\nQuestion: {request.question}"
-                ))
-            else:
-                messages.append(HumanMessage(content=request.question))
-
-            streaming_llm = ChatOpenAI(
-                model="gpt-4o-mini",
-                temperature=0,
-                streaming=True
+            # Run the real LangGraph agent in a thread
+            # (LangGraph is sync, we wrap it for async streaming)
+            loop = asyncio.get_event_loop()
+            answer = await loop.run_in_executor(
+                None,
+                lambda: run_agent(request.question, request.history)
             )
 
-            async for chunk in streaming_llm.astream(messages):
-                if chunk.content:
-                    yield f"data: {chunk.content}\n\n"
-                    await asyncio.sleep(0)
+            # Stream the answer word by word
+            words = answer.split(' ')
+            for i, word in enumerate(words):
+                if i < len(words) - 1:
+                    yield f"data: {word} \n\n"
+                else:
+                    yield f"data: {word}\n\n"
+                await asyncio.sleep(0.02)
 
             yield "data: [DONE]\n\n"
 
@@ -175,8 +137,7 @@ async def ask_stream(request: QuestionRequest):
         generate(),
         media_type="text/event-stream",
         headers={
-            "Cache-Control": "no-cache, no-transform",
-            "Connection": "keep-alive",
+            "Cache-Control": "no-cache",
             "X-Accel-Buffering": "no"
         }
     )
