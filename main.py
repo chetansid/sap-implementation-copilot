@@ -1,3 +1,6 @@
+from database import init_db
+from memory import save_message, get_history, save_project_context, get_project_context, clear_history, get_session_summary
+import uuid
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, Response
@@ -14,6 +17,9 @@ from dotenv import load_dotenv
 load_dotenv(override=False)
 
 app = FastAPI(title="SAP Implementation Copilot")
+
+# Initialize database tables on startup
+init_db()
 
 os.makedirs("uploads", exist_ok=True)
 os.makedirs("static", exist_ok=True)
@@ -100,47 +106,6 @@ def ui(response: Response):
     response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
     return FileResponse("static/index.html")
 
-@app.post("/ask-stream")
-async def ask_stream(request: QuestionRequest):
-    if not request.question.strip():
-        raise HTTPException(status_code=400, detail="Question cannot be empty")
-
-    async def generate():
-        try:
-            import asyncio
-            from agent import run_agent
-
-            # Run the real LangGraph agent in a thread
-            # (LangGraph is sync, we wrap it for async streaming)
-            loop = asyncio.get_event_loop()
-            answer = await loop.run_in_executor(
-                None,
-                lambda: run_agent(request.question, request.history)
-            )
-
-            # Stream the answer word by word
-            words = answer.split(' ')
-            for i, word in enumerate(words):
-                if i < len(words) - 1:
-                    yield f"data: {word} \n\n"
-                else:
-                    yield f"data: {word}\n\n"
-                await asyncio.sleep(0.02)
-
-            yield "data: [DONE]\n\n"
-
-        except Exception as e:
-            yield f"data: Error: {str(e)}\n\n"
-            yield "data: [DONE]\n\n"
-
-    return StreamingResponse(
-        generate(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no"
-        }
-    )
 
 @app.post("/upload-template")
 async def upload_template(file: UploadFile = File(...)):
@@ -183,3 +148,129 @@ def ask_with_template(request: QuestionRequest):
     return {"answer": design}
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
+
+class ProjectContextRequest(BaseModel):
+    session_id: str
+    project_name: str
+    client_name: str
+    notes: str = ""
+
+
+@app.post("/ask")
+def ask(request: QuestionRequest):
+    if not request.question.strip():
+        raise HTTPException(status_code=400, detail="Question cannot be empty")
+
+    session_id = request.history[0].get("session_id", str(uuid.uuid4())) \
+        if request.history else str(uuid.uuid4())
+
+    try:
+        # Get history from PostgreSQL
+        history = get_history(session_id)
+
+        # Get project context
+        project_ctx = get_project_context(session_id)
+        context_prefix = ""
+        if project_ctx:
+            context_prefix = f"Project: {project_ctx.get('project_name', '')} | Client: {project_ctx.get('client_name', '')}\n"
+
+        # Run agent with history
+        full_question = context_prefix + request.question if context_prefix else request.question
+        answer = run_agent(full_question, history)
+
+        # Save to PostgreSQL
+        save_message(session_id, "user", request.question)
+        save_message(session_id, "assistant", answer)
+
+        return {
+            "question": request.question,
+            "answer": answer,
+            "session_id": session_id
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/ask-stream")
+async def ask_stream(request: QuestionRequest):
+    session_id = request.history[0].get("session_id") \
+        if request.history else str(uuid.uuid4())
+
+    async def generate():
+        try:
+            import asyncio
+            from agent import run_agent
+
+            # Get persistent history
+            history = get_history(session_id)
+
+            # Get project context
+            project_ctx = get_project_context(session_id)
+            context_prefix = ""
+            if project_ctx:
+                context_prefix = f"Project context — Project: {project_ctx.get('project_name', '')} | Client: {project_ctx.get('client_name', '')}\n"
+
+            full_question = context_prefix + request.question if context_prefix else request.question
+
+            # Send session ID first
+            yield f"data: [SESSION:{session_id}]\n\n"
+
+            loop = asyncio.get_event_loop()
+            answer = await loop.run_in_executor(
+                None,
+                lambda: run_agent(full_question, history)
+            )
+
+            # Save to PostgreSQL
+            save_message(session_id, "user", request.question)
+            save_message(session_id, "assistant", answer)
+            print(f"✅ Saved messages for session: {session_id}")
+
+            # Stream word by word
+            words = answer.split(' ')
+            for i, word in enumerate(words):
+                yield f"data: {word} \n\n"
+                await asyncio.sleep(0.02)
+
+            yield "data: [DONE]\n\n"
+
+        except Exception as e:
+            print(f"❌ Streaming error: {str(e)}")  # ADD THIS
+            yield f"data: Error: {str(e)}\n\n"
+            traceback.print_exc() 
+            yield "data: [DONE]\n\n"
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
+    )
+
+
+@app.post("/session/context")
+def set_project_context(request: ProjectContextRequest):
+    save_project_context(
+        request.session_id,
+        request.project_name,
+        request.client_name,
+        request.notes
+    )
+    return {"message": "Project context saved"}
+
+
+@app.get("/session/{session_id}/history")
+def get_session_history(session_id: str):
+    history = get_history(session_id, limit=50)
+    summary = get_session_summary(session_id)
+    return {"session_id": session_id, "history": history, "summary": summary}
+
+
+@app.delete("/session/{session_id}")
+def clear_session(session_id: str):
+    clear_history(session_id)
+    return {"message": f"Session {session_id} cleared"}
+
+
+@app.get("/session/new")
+def new_session():
+    return {"session_id": str(uuid.uuid4())}

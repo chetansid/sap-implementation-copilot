@@ -135,209 +135,273 @@
   </div>
 
 <script>
-  let history = [];
-  const intentLabels = {
-    SEARCH: '🔍 Searched documents',
-    TECHNICAL_DESIGN: '📐 Generated technical design',
-    BASIS_SCRIPT: '⚙️ Generated BASIS script',
-    LOG_ANALYSIS: '🔎 Analyzed log',
-    SUMMARIZE: '📋 Summarized notes',
-    GENERAL: '💬 General knowledge'
-  };
+// Session management
+let sessionId = localStorage.getItem('sap_copilot_session') || null;
+let history = [];
+const intentLabels = {
+  SEARCH: '🔍 Searched documents',
+  TECHNICAL_DESIGN: '📐 Generated technical design',
+  BASIS_SCRIPT: '⚙️ Generated BASIS script',
+  LOG_ANALYSIS: '🔎 Analyzed log',
+  SUMMARIZE: '📋 Summarized notes',
+  GENERAL: '💬 General knowledge'
+};
 
-  function removeWelcome() {
-    const w = document.getElementById('welcome');
-    if (w) w.remove();
+async function initSession() {
+  if (!sessionId) {
+    const res = await fetch('/session/new');
+    const data = await res.json();
+    sessionId = data.session_id;
+    localStorage.setItem('sap_copilot_session', sessionId);
   }
 
-  function addMessage(role, text, intent) {
-    removeWelcome();
-    const msgs = document.getElementById('messages');
-    const div = document.createElement('div');
-    div.className = `message ${role}`;
-    const bubble = document.createElement('div');
-    bubble.className = 'bubble';
-    bubble.textContent = text;
-    div.appendChild(bubble);
-    if (intent && role === 'assistant') {
-      const tag = document.createElement('div');
-      tag.className = 'intent-tag';
-      tag.textContent = intentLabels[intent] || intent;
-      div.appendChild(tag);
-    }
-    msgs.appendChild(div);
-    msgs.scrollTop = msgs.scrollHeight;
-  }
-
-  function addTyping() {
-    removeWelcome();
-    const msgs = document.getElementById('messages');
-    const div = document.createElement('div');
-    div.className = 'message assistant';
-    div.id = 'typing';
-    div.innerHTML = '<div class="typing"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div>';
-    msgs.appendChild(div);
-    msgs.scrollTop = msgs.scrollHeight;
-  }
-
-  function removeTyping() {
-    const t = document.getElementById('typing');
-    if (t) t.remove();
-  }
-
-    async function sendQuestion() {
-    const input = document.getElementById('questionInput');
-    const btn = document.getElementById('sendBtn');
-    const question = input.value.trim();
-    if (!question) return;
-
-    addMessage('user', question);
-    input.value = '';
-    btn.disabled = true;
-
-    // Create assistant message bubble for streaming
-    removeWelcome();
-    const msgs = document.getElementById('messages');
-    const div = document.createElement('div');
-    div.className = 'message assistant';
-    div.id = 'streaming-msg';
-    const bubble = document.createElement('div');
-    bubble.className = 'bubble';
-    bubble.textContent = '';
-    div.appendChild(bubble);
-    msgs.appendChild(div);
-
-    let intentTag = null;
-    let fullText = '';
-
-    try {
-        const res = await fetch('/ask-stream', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question, history })
-        });
-
-        const reader = res.body.getReader();
-        const decoder = new TextDecoder();
-
-        while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        const chunk = decoder.decode(value);
-        const lines = chunk.split('\n');
-
-        for (const line of lines) {
-            if (line.startsWith('data: ')) {
-            const data = line.slice(6);
-            if (data === '[DONE]') break;
-            if (data.startsWith('[INTENT:')) {
-                const intent = data.slice(8, -1);
-                if (!intentTag) {
-                intentTag = document.createElement('div');
-                intentTag.className = 'intent-tag';
-                intentTag.textContent = intentLabels[intent] || intent;
-                div.appendChild(intentTag);
-                }
-            } else {
-                fullText += data;
-                bubble.textContent = fullText;
-                msgs.scrollTop = msgs.scrollHeight;
-            }
-            }
-        }
-        }
-    } catch (err) {
-        bubble.textContent = 'Something went wrong. Please try again.';
-    }
-
-    div.id = '';
-    history.push({ role: 'user', content: question });
-    history.push({ role: 'assistant', content: fullText });
-    if (history.length > 10) history = history.slice(-10);
-    btn.disabled = false;
-    }
-
-  async function uploadFile() {
-    const fileInput = document.getElementById('fileInput');
-    const docType = document.getElementById('docType').value;
-    const status = document.getElementById('uploadStatus');
-    const file = fileInput.files[0];
-    if (!file) return;
-
-    status.textContent = 'Uploading and ingesting...';
-    status.style.color = '#888';
-
-    const formData = new FormData();
-    formData.append('file', file);
-    formData.append('doc_type', docType);
-
-    try {
-      const res = await fetch(`/upload?doc_type=${docType}`, {
-        method: 'POST',
-        body: formData
+  // Load existing history from PostgreSQL
+  try {
+    const res = await fetch(`/session/${sessionId}/history`);
+    const data = await res.json();
+    if (data.history && data.history.length > 0) {
+      removeWelcome();
+      data.history.forEach(msg => {
+        addMessage(msg.role === 'user' ? 'user' : 'assistant', msg.content);
       });
-      const data = await res.json();
-      status.textContent = `✓ ${data.chunks_created} chunks ingested`;
-      status.style.color = '#137333';
-      loadDocuments();
-    } catch (err) {
-      status.textContent = 'Upload failed. Try again.';
-      status.style.color = '#c5221f';
+      updateSessionInfo(data.summary);
     }
+  } catch (e) {}
+}
+
+function updateSessionInfo(summary) {
+  const info = document.getElementById('sessionInfo');
+  if (info && summary) {
+    info.textContent = `${summary.total_messages} messages · Last active: ${
+      summary.last_activity ? new Date(summary.last_activity).toLocaleDateString() : 'today'
+    }`;
   }
+}
 
-  async function analyzeLog() {
-    const logContent = document.getElementById('logInput').value.trim();
-    if (!logContent) return;
+function removeWelcome() {
+  const w = document.getElementById('welcome');
+  if (w) w.remove();
+}
 
-    addMessage('user', `Analyze this SAP log:\n${logContent.slice(0, 100)}...`);
-    addTyping();
-
-    try {
-      const res = await fetch('/analyze-log', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ log_content: logContent })
-      });
-      const data = await res.json();
-      removeTyping();
-      addMessage('assistant', data.analysis, 'LOG_ANALYSIS');
-      document.getElementById('logInput').value = '';
-    } catch (err) {
-      removeTyping();
-      addMessage('assistant', 'Log analysis failed. Please try again.');
-    }
+function addMessage(role, text, intent) {
+  removeWelcome();
+  const msgs = document.getElementById('messages');
+  const div = document.createElement('div');
+  div.className = `message ${role}`;
+  const bubble = document.createElement('div');
+  bubble.className = 'bubble';
+  bubble.textContent = text;
+  div.appendChild(bubble);
+  if (intent && role === 'assistant') {
+    const tag = document.createElement('div');
+    tag.className = 'intent-tag';
+    tag.textContent = intentLabels[intent] || intent;
+    div.appendChild(tag);
   }
+  msgs.appendChild(div);
+  msgs.scrollTop = msgs.scrollHeight;
+}
 
-  async function loadDocuments() {
-    try {
-      const res = await fetch('/documents');
-      const data = await res.json();
-      const list = document.getElementById('docList');
-      const count = document.getElementById('docCount');
-      count.textContent = `${data.total} document${data.total !== 1 ? 's' : ''} loaded`;
+async function sendQuestion() {
+  const input = document.getElementById('questionInput');
+  const btn = document.getElementById('sendBtn');
+  const question = input.value.trim();
+  if (!question) return;
 
-      if (data.documents.length === 0) {
-        list.innerHTML = '<li style="font-size:11px;color:#bbb;">No documents yet</li>';
-        return;
+  addMessage('user', question);
+  input.value = '';
+  btn.disabled = true;
+
+  removeWelcome();
+  const msgs = document.getElementById('messages');
+  const div = document.createElement('div');
+  div.className = 'message assistant';
+  div.id = 'streaming-msg';
+  const bubble = document.createElement('div');
+  bubble.className = 'bubble';
+  bubble.textContent = '';
+  div.appendChild(bubble);
+  msgs.appendChild(div);
+
+  let fullText = '';
+
+  try {
+    const res = await fetch('/ask-stream', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        question,
+        history: [{ session_id: sessionId }]
+      })
+    });
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      const chunk = decoder.decode(value);
+      const lines = chunk.split('\n');
+
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          const data = line.slice(6);
+          if (data === '[DONE]') break;
+          if (data.startsWith('[SESSION:')) {
+            // Session confirmed
+          } else if (data.startsWith('[INTENT:')) {
+            const intent = data.slice(8, -1);
+            const tag = document.createElement('div');
+            tag.className = 'intent-tag';
+            tag.textContent = intentLabels[intent] || intent;
+            div.appendChild(tag);
+          } else {
+            fullText += data;
+            bubble.textContent = fullText;
+            msgs.scrollTop = msgs.scrollHeight;
+          }
+        }
       }
-
-      list.innerHTML = data.documents.map(doc => `
-        <li class="doc-item">
-          <span class="doc-badge badge-${doc.type}">${doc.type}</span>
-          <span class="doc-name" title="${doc.file}">${doc.file}</span>
-        </li>
-      `).join('');
-    } catch (e) {}
+    }
+  } catch (err) {
+    bubble.textContent = 'Something went wrong. Please try again.';
   }
 
-  function suggest(el) {
-    document.getElementById('questionInput').value = el.textContent;
-    sendQuestion();
-  }
+  div.id = '';
+  btn.disabled = false;
+}
 
-  loadDocuments();
+async function setProjectContext() {
+  const projectName = document.getElementById('projectName')?.value?.trim();
+  const clientName = document.getElementById('clientName')?.value?.trim();
+  if (!projectName || !clientName) return;
+
+  await fetch('/session/context', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      session_id: sessionId,
+      project_name: projectName,
+      client_name: clientName
+    })
+  });
+
+  document.getElementById('contextStatus').textContent = '✓ Context saved';
+}
+
+async function clearSession() {
+  if (!confirm('Clear all conversation history?')) return;
+  await fetch(`/session/${sessionId}`, { method: 'DELETE' });
+  localStorage.removeItem('sap_copilot_session');
+  sessionId = null;
+  document.getElementById('messages').innerHTML = '';
+  initSession();
+}
+
+async function uploadFile() {
+  const fileInput = document.getElementById('fileInput');
+  const docType = document.getElementById('docType').value;
+  const status = document.getElementById('uploadStatus');
+  const file = fileInput.files[0];
+  if (!file) return;
+
+  status.textContent = 'Uploading and ingesting...';
+  status.style.color = '#888';
+
+  const formData = new FormData();
+  formData.append('file', file);
+  formData.append('doc_type', docType);
+
+  try {
+    const res = await fetch(`/upload?doc_type=${docType}`, {
+      method: 'POST',
+      body: formData
+    });
+    const data = await res.json();
+    status.textContent = `✓ ${data.chunks_created} chunks ingested`;
+    status.style.color = '#137333';
+    loadDocuments();
+  } catch (err) {
+    status.textContent = 'Upload failed. Try again.';
+    status.style.color = '#c5221f';
+  }
+}
+
+async function analyzeLog() {
+  const logContent = document.getElementById('logInput').value.trim();
+  if (!logContent) return;
+  addMessage('user', `Analyze this SAP log:\n${logContent.slice(0, 100)}...`);
+  const msgs = document.getElementById('messages');
+  const div = document.createElement('div');
+  div.className = 'message assistant';
+  const bubble = document.createElement('div');
+  bubble.className = 'bubble';
+  bubble.textContent = 'Analyzing...';
+  div.appendChild(bubble);
+  msgs.appendChild(div);
+
+  try {
+    const res = await fetch('/analyze-log', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ log_content: logContent })
+    });
+    const data = await res.json();
+    bubble.textContent = data.analysis;
+    save_message(sessionId, 'user', `Log analysis: ${logContent.slice(0, 100)}`);
+    document.getElementById('logInput').value = '';
+  } catch (err) {
+    bubble.textContent = 'Log analysis failed. Please try again.';
+  }
+}
+
+async function loadDocuments() {
+  try {
+    const res = await fetch('/documents');
+    const data = await res.json();
+    const list = document.getElementById('docList');
+    const count = document.getElementById('docCount');
+    count.textContent = `${data.total} document${data.total !== 1 ? 's' : ''} loaded`;
+    if (data.documents.length === 0) {
+      list.innerHTML = '<li style="font-size:11px;color:#bbb;">No documents yet</li>';
+      return;
+    }
+    list.innerHTML = data.documents.map(doc => `
+      <li class="doc-item">
+        <span class="doc-badge badge-${doc.type}">${doc.type}</span>
+        <span class="doc-name" title="${doc.file}">${doc.file}</span>
+      </li>
+    `).join('');
+  } catch (e) {}
+}
+
+function suggest(el) {
+  document.getElementById('questionInput').value = el.textContent;
+  sendQuestion();
+}
+
+// Add project context fields to sidebar
+function addContextFields() {
+  const sidebar = document.querySelector('.sidebar');
+  const contextDiv = document.createElement('div');
+  contextDiv.innerHTML = `
+    <p class="sidebar-title">🏢 Project Context</p>
+    <input type="text" id="projectName" placeholder="Project name" style="width:100%;padding:7px 10px;border:1px solid #e0e0e0;border-radius:6px;font-size:12px;margin-bottom:6px;">
+    <input type="text" id="clientName" placeholder="Client name" style="width:100%;padding:7px 10px;border:1px solid #e0e0e0;border-radius:6px;font-size:12px;margin-bottom:6px;">
+    <button onclick="setProjectContext()" style="width:100%;padding:7px;background:#003366;color:white;border:none;border-radius:6px;font-size:12px;cursor:pointer;">Save Context</button>
+    <div id="contextStatus" style="font-size:11px;color:#137333;margin-top:4px;"></div>
+    <div id="sessionInfo" style="font-size:10px;color:#aaa;margin-top:4px;"></div>
+    <button onclick="clearSession()" style="width:100%;padding:5px;background:none;border:1px solid #e0e0e0;color:#888;border-radius:6px;font-size:11px;cursor:pointer;margin-top:6px;">Clear History</button>
+  `;
+  sidebar.insertBefore(contextDiv, sidebar.firstChild);
+}
+
+// Initialize
+addContextFields();
+initSession();
+loadDocuments();
 </script>
 </body>
 </html>
